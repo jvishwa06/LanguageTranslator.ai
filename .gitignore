@@ -1,0 +1,4 @@
+.venv
+others
+__pycache__
+.DS_Store
