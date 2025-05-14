@@ -1,0 +1,13 @@
+fastapi==0.103.1
+uvicorn==0.23.2
+torch==2.0.1
+spacy==3.6.1
+datasets==2.14.5
+onnxruntime==1.15.1
+torchtext==0.15.2
+torchdata==0.6.1
+pydantic==2.3.0
+numpy==1.25.2
+
+https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.6.0/en_core_web_sm-3.6.0-py3-none-any.whl
+https://github.com/explosion/spacy-models/releases/download/de_core_news_sm-3.6.0/de_core_news_sm-3.6.0-py3-none-any.whl
