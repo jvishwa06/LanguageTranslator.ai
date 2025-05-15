@@ -1,4 +1,6 @@
 .venv
-others
+otherfiles
 __pycache__
 .DS_Store
+mlartifacts
+mlruns
