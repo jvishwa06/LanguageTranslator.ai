@@ -106,7 +106,7 @@ async def lifespan(app: FastAPI):
         input_dim = len(de_vocab)
         output_dim = len(en_vocab)
         
-        model_path = os.path.join(os.path.dirname(__file__), "models", "seq2seq47.pt")
+        model_path = os.path.join(os.path.dirname(__file__), "models", "best.pt")
         
         encoder = Encoder(input_dim=input_dim, embedding_dim=256, hidden_size=512, num_layers=3, dropout=0.2)
         
@@ -115,7 +115,7 @@ async def lifespan(app: FastAPI):
         model = Seq2Seq(encoder, decoder, device).to(device)
         
         print("Loading model weights...")
-        model_path = os.path.join(os.path.dirname(__file__), "models", "seq2seq47.pt")
+        model_path = os.path.join(os.path.dirname(__file__), "models", "best.pt")
         model.load_state_dict(torch.load(model_path, map_location=device))
         model.eval()
         
