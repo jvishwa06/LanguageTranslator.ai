@@ -9,6 +9,7 @@ import onnxruntime as ort
 import matplotlib.pyplot as plt
 import gc
 import spacy
+from torchtext.vocab import build_vocab_from_iterator
 from architecture import Encoder, Decoder, Seq2Seq
 
 NUM_RUNS = 20
@@ -19,27 +20,8 @@ DEVICE = torch.device("cpu")
 
 MODELS_DIR = os.path.join(os.path.dirname(__file__), "models")
 
-class VocabAdapter:
-    def __init__(self, vocab_dict):
-        self.vocab_dict = vocab_dict
-        self.idx_to_token = {v: k for k, v in vocab_dict.items()}
-        
-    def __getitem__(self, token):
-        return self.vocab_dict.get(token, self.vocab_dict.get("<unk>", 0))
-        
-    def lookup_indices(self, tokens):
-        return [self[token] for token in tokens]
-        
-    def lookup_tokens(self, indices):
-        return [self.idx_to_token.get(idx, "<unk>") for idx in indices]
-        
-    def lookup_token(self, idx):
-        return self.idx_to_token.get(idx, "<unk>")
-        
-    def __len__(self):
-        return len(self.vocab_dict)
-
 def load_vocab():
+    """Load vocabularies from files using torchtext's Vocab class"""
     en_vocab_path = os.path.join(MODELS_DIR, "en_vocab.json")
     de_vocab_path = os.path.join(MODELS_DIR, "de_vocab.json")
     
@@ -47,11 +29,23 @@ def load_vocab():
         en_vocab_dict = json.load(f)
     with open(de_vocab_path, 'r', encoding='utf-8') as f:
         de_vocab_dict = json.load(f)
+        
+    specials = ['<unk>', '<pad>', '<sos>', '<eos>']
     
-    en_vocab_adapter = VocabAdapter(en_vocab_dict)
-    de_vocab_adapter = VocabAdapter(de_vocab_dict)
+    en_vocab = build_vocab_from_iterator([[]], specials=specials)
+    de_vocab = build_vocab_from_iterator([[]], specials=specials)
     
-    return en_vocab_adapter, de_vocab_adapter
+    for token, index in en_vocab_dict.items():
+        if token not in specials:
+            en_vocab.insert_token(token, index)
+    for token, index in de_vocab_dict.items():
+        if token not in specials:
+            de_vocab.insert_token(token, index)
+    
+    en_vocab.set_default_index(en_vocab['<unk>'])
+    de_vocab.set_default_index(de_vocab['<unk>'])
+    
+    return en_vocab, de_vocab
 
 def load_torch_model(model_path, input_dim, output_dim):
     print(f"Loading PyTorch model from {model_path}")
@@ -99,10 +93,10 @@ def translate_torch(sentence, model, de_nlp, en_vocab, de_vocab, sos_token, eos_
 
         tokens = [token.lower() for token in tokens]
         tokens = [sos_token] + tokens + [eos_token]
-        ids = de_vocab.lookup_indices(tokens)
+        ids = [de_vocab[token] for token in tokens]
         tensor = torch.LongTensor(ids).unsqueeze(-1).to(DEVICE)
         hidden, cell = model.encoder(tensor)
-        inputs = en_vocab.lookup_indices([sos_token])
+        inputs = [en_vocab[sos_token]]
         for _ in range(MAX_LEN):
             inputs_tensor = torch.LongTensor([inputs[-1]]).to(DEVICE)
             output, hidden, cell = model.decoder(inputs_tensor, hidden, cell)
@@ -115,7 +109,7 @@ def translate_torch(sentence, model, de_nlp, en_vocab, de_vocab, sos_token, eos_
 
 def translate_onnx(sentence, encoder_sess, decoder_sess, de_nlp, en_vocab, de_vocab, sos_token, eos_token):
     tokens = [sos_token] + [tok.text.lower() for tok in de_nlp.tokenizer(sentence)] + [eos_token]
-    input_ids = de_vocab.lookup_indices(tokens)
+    input_ids = [de_vocab[token] for token in tokens]
     src_tensor = np.array(input_ids, dtype=np.int64).reshape(-1, 1) 
 
     encoder_outputs = encoder_sess.run(None, {"src": src_tensor})
@@ -139,7 +133,8 @@ def translate_onnx(sentence, encoder_sess, decoder_sess, de_nlp, en_vocab, de_vo
         output, hidden, cell = decoder_outputs
         pred_token_id = int(np.argmax(output, axis=1)[0])
         inputs.append(pred_token_id)
-        translated_tokens.append(en_vocab.lookup_token(pred_token_id))
+        token = en_vocab.lookup_token(pred_token_id)
+        translated_tokens.append(token)
         
         if pred_token_id == en_vocab[eos_token]:
             break
@@ -159,10 +154,10 @@ def batch_translate_torch(sentences, model, de_nlp, en_vocab, de_vocab, sos_toke
 
             tokens = [token.lower() for token in tokens]
             tokens = [sos_token] + tokens + [eos_token]
-            ids = de_vocab.lookup_indices(tokens)
+            ids = [de_vocab[token] for token in tokens]
             tensor = torch.LongTensor(ids).unsqueeze(-1).to(DEVICE)
             hidden, cell = model.encoder(tensor)
-            inputs = en_vocab.lookup_indices([sos_token])
+            inputs = [en_vocab[sos_token]]
             for _ in range(MAX_LEN):
                 inputs_tensor = torch.LongTensor([inputs[-1]]).to(DEVICE)
                 output, hidden, cell = model.decoder(inputs_tensor, hidden, cell)
@@ -180,7 +175,7 @@ def batch_translate_onnx(sentences, encoder_sess, decoder_sess, de_nlp, en_vocab
     
     for sentence in sentences:
         tokens = [sos_token] + [tok.text.lower() for tok in de_nlp.tokenizer(sentence)] + [eos_token]
-        input_ids = de_vocab.lookup_indices(tokens)
+        input_ids = [de_vocab[token] for token in tokens]
         src_tensor = np.array(input_ids, dtype=np.int64).reshape(-1, 1) 
 
         encoder_outputs = encoder_sess.run(None, {"src": src_tensor})
@@ -204,7 +199,8 @@ def batch_translate_onnx(sentences, encoder_sess, decoder_sess, de_nlp, en_vocab
             output, hidden, cell = decoder_outputs
             pred_token_id = int(np.argmax(output, axis=1)[0])
             inputs.append(pred_token_id)
-            translated_tokens.append(en_vocab.lookup_token(pred_token_id))
+            token = en_vocab.lookup_token(pred_token_id)
+            translated_tokens.append(token)
             
             if pred_token_id == en_vocab[eos_token]:
                 break
