@@ -2,7 +2,6 @@ import os
 import torch
 import torch.nn as nn
 import json
-import re
 import time
 import spacy
 from torchtext.vocab import build_vocab_from_iterator
@@ -35,20 +34,7 @@ def load_vocabularies(models_dir):
 
 def load_model(model_path, device, input_dim, output_dim, embedding_dim=256, hidden_size=512, dropout=0.5):
     state_dict = torch.load(model_path, map_location=device)
-    num_layers = 0
-    layer_pattern = re.compile(r'encoder\.lstm\.weight_ih_l(\d+)')
-    
-    for key in state_dict.keys():
-        match = layer_pattern.match(key)
-        if match:
-            layer = int(match.group(1)) + 1
-            num_layers = max(num_layers, layer)
-    
-    if num_layers == 0:
-        num_layers = 3
-        print(f"Could not detect layers, using default value: {num_layers}")
-    else:
-        print(f"Detected {num_layers} layers in model")
+    num_layers = 3
     
     encoder = Encoder(input_dim, embedding_dim, hidden_size, num_layers, dropout)
     decoder = Decoder(output_dim, embedding_dim, hidden_size, num_layers, dropout)
@@ -69,7 +55,7 @@ def load_model(model_path, device, input_dim, output_dim, embedding_dim=256, hid
     
     return model
 
-def quantize_model(model, device):
+def quantize_model(model):
     """Apply quantization to the model"""
     print("Quantizing model...")
     model_cp = model.cpu()
@@ -89,11 +75,7 @@ def quantize_model(model, device):
             torch.backends.quantized.engine = engines[0]
             
         try:
-            quantized_model = torch.quantization.quantize_dynamic(
-                model_cp,
-                {nn.LSTM, nn.Linear},
-                dtype=torch.qint8
-            )
+            quantized_model = torch.quantization.quantize_dynamic(model_cp,{nn.LSTM, nn.Linear},dtype=torch.qint8)
             print("Dynamic quantization successful")
             return quantized_model
         except Exception as e:
@@ -124,8 +106,8 @@ def measure_inference_time(model, sentence, de_nlp, en_vocab, de_vocab, device, 
 
 def test_translation_speed(model, de_nlp, en_vocab, de_vocab, device):
 
-    long_sentence = "Die künstliche Intelligenz hat in den letzten Jahren erhebliche Fortschritte gemacht und wird in vielen Bereichen eingesetzt, von der medizinischen Diagnostik über autonomes Fahren bis hin zur Sprachübersetzung, die wir hier verwenden, um die Leistung unseres quantisierten Modells zu testen."
-    long_time = measure_inference_time(model, long_sentence, de_nlp, en_vocab, de_vocab, device)
+    sentence = "Die künstliche Intelligenz hat in den letzten Jahren erhebliche Fortschritte gemacht und wird in vielen Bereichen eingesetzt, von der medizinischen Diagnostik über autonomes Fahren bis hin zur Sprachübersetzung, die wir hier verwenden, um die Leistung unseres quantisierten Modells zu testen."
+    long_time = measure_inference_time(model, sentence, de_nlp, en_vocab, de_vocab, device)
     
     return long_time
 
@@ -152,7 +134,7 @@ def main():
     
     orig_long_time = test_translation_speed(model, de_nlp, en_vocab, de_vocab, device)
     
-    quantized_model = quantize_model(model, device)
+    quantized_model = quantize_model(model)
     
     quant_long_time = test_translation_speed(quantized_model, de_nlp, en_vocab, de_vocab, device)
     
@@ -160,9 +142,12 @@ def main():
     
     quant_size_mb = os.path.getsize(quantized_path) / (1024 * 1024)
     
-    print("\n=== MODEL COMPARISON ===")
-    print(f"Size: {orig_size_mb:.2f}MB → {quant_size_mb:.2f}MB ({(1 - quant_size_mb/orig_size_mb)*100:.2f}% reduction)")
-    print(f"Long sentence: {orig_long_time:.4f}s → {quant_long_time:.4f}s ({(orig_long_time / quant_long_time - 1)*100:.2f}% faster)")
+    print("\n=== TORCH MODEL COMPARISON ===")
+    print(f"Original Model Size: {orig_size_mb:.2f}MB")
+    print(f"Quantized Model Size: {quant_size_mb:.2f}MB")
+
+    print(f"Original Inference Time: {orig_long_time:.4f}s")
+    print(f"Quantized Inference Time: {quant_long_time:.4f}s")
 
 if __name__ == "__main__":
     main()

@@ -12,7 +12,7 @@ class Encoder(nn.Module):
         self.lstm = nn.LSTM(embedding_dim,hidden_size,num_layers=num_layers,bidirectional=True,dropout=dropout)
     def forward(self,src):
         embedded = self.dropout(self.embedding(src))
-        out,(hidden,cell) = self.lstm(embedded)
+        _,(hidden,cell) = self.lstm(embedded)
         return hidden,cell
 
 class Decoder(nn.Module):
@@ -55,7 +55,7 @@ class Seq2Seq(nn.Module):
             input_token = trg[t] if teacher_force else top1
         return outputs
 
-def translate_torch(sentence, model, de_nlp, en_vocab, de_vocab, sos_token, eos_token, device, max_len=25,):
+def translate_torch(sentence, model, de_nlp, en_vocab, de_vocab, sos_token, eos_token, device, max_len=25):
     model.eval()
     with torch.no_grad():
         if isinstance(sentence, str):
