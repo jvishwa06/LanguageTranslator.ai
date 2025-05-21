@@ -9,7 +9,6 @@ import onnxruntime as ort
 import matplotlib.pyplot as plt
 import gc
 import spacy
-from torchtext.vocab import build_vocab_from_iterator
 from architecture import Encoder, Decoder, Seq2Seq
 
 NUM_RUNS = 20
@@ -40,19 +39,7 @@ class VocabAdapter:
     def __len__(self):
         return len(self.vocab_dict)
 
-def build_vocab(vocab_dict, specials=['<unk>', '<pad>', '<sos>', '<eos>']):
-    """Build a proper vocabulary object from a dictionary"""
-    vocab = build_vocab_from_iterator([[]], specials=specials)
-    
-    for token, index in vocab_dict.items():
-        if token not in specials:
-            vocab.insert_token(token, index)
-    
-    vocab.set_default_index(vocab['<unk>'])
-    return vocab
-
 def load_vocab():
-    """Load vocabularies from files"""
     en_vocab_path = os.path.join(MODELS_DIR, "en_vocab.json")
     de_vocab_path = os.path.join(MODELS_DIR, "de_vocab.json")
     
@@ -64,71 +51,37 @@ def load_vocab():
     en_vocab_adapter = VocabAdapter(en_vocab_dict)
     de_vocab_adapter = VocabAdapter(de_vocab_dict)
     
-    en_vocab_proper = build_vocab(en_vocab_dict)
-    de_vocab_proper = build_vocab(de_vocab_dict)
-    
-    return en_vocab_adapter, de_vocab_adapter, en_vocab_proper, de_vocab_proper
-
-def load_tokenizers():
-    """Load spacy tokenizers"""
-    print("Loading spaCy models...")
-    en_nlp = spacy.load('en_core_web_sm')
-    de_nlp = spacy.load('de_core_news_sm')
-    return en_nlp, de_nlp
+    return en_vocab_adapter, de_vocab_adapter
 
 def load_torch_model(model_path, input_dim, output_dim):
-    """Load PyTorch model"""
     print(f"Loading PyTorch model from {model_path}")
     
     is_quantized = "quant" in model_path.lower()
     
     if is_quantized:
         try:
-            if hasattr(torch.backends, 'quantized') and hasattr(torch.backends.quantized, 'supported_engines'):
-                engines = torch.backends.quantized.supported_engines
-                print(f"Supported quantization engines: {engines}")
-                
-                if 'fbgemm' in engines:
-                    print("Using FBGEMM backend")
-                    torch.backends.quantized.engine = 'fbgemm'
-                elif 'qnnpack' in engines:
-                    print("Using QNNPACK backend")
-                    torch.backends.quantized.engine = 'qnnpack'
-                else:
-                    print(f"Using {engines[0]} backend")
-                    torch.backends.quantized.engine = engines[0]
-                    
+            torch.backends.quantized.engine = 'qnnpack'        
             model = torch.load(model_path, map_location=DEVICE)
-            print("Loaded quantized model directly")
             return model
-        
         except Exception as e:
-            print(f"Failed to load quantized model directly: {e}")
-                
-
-    else:
+            print(f"Failed to load quantized model : {e}")
+    try:
         state_dict = torch.load(model_path, map_location=DEVICE)
-        
         num_layers = 3
-        input_dim_actual = input_dim
-        output_dim_actual = output_dim
         EMBEDDING_DIM = 256
         HIDDEN_SIZE = 512
-        DROPOUT = 0.2  
-
-        encoder = Encoder(input_dim_actual, EMBEDDING_DIM, HIDDEN_SIZE, num_layers, DROPOUT)
-        decoder = Decoder(output_dim_actual, EMBEDDING_DIM, HIDDEN_SIZE, num_layers, DROPOUT)
+        DROPOUT = 0.2
+        encoder = Encoder(input_dim, EMBEDDING_DIM, HIDDEN_SIZE, num_layers, DROPOUT)
+        decoder = Decoder(output_dim, EMBEDDING_DIM, HIDDEN_SIZE, num_layers, DROPOUT)
         model = Seq2Seq(encoder, decoder, DEVICE)
-        
         model.load_state_dict(state_dict)
         model.eval()
-        
         return model
+    except Exception as e:
+        print(f"Failed to load model: {e}")
+        return None
 
 def load_onnx_sessions(encoder_path, decoder_path):
-    """Load ONNX models"""
-    print(f"Loading ONNX models from {encoder_path} and {decoder_path}")
-    
     providers = ['CPUExecutionProvider']
     
     encoder_session = ort.InferenceSession(encoder_path, providers=providers)
@@ -136,8 +89,7 @@ def load_onnx_sessions(encoder_path, decoder_path):
     
     return encoder_session, decoder_session
 
-def custom_translate_torch(sentence, model, de_nlp, en_vocab, de_vocab, sos_token, eos_token):
-    """Custom implementation of translate_torch to avoid architecture module dependency"""
+def translate_torch(sentence, model, de_nlp, en_vocab, de_vocab, sos_token, eos_token):
     model.eval()
     with torch.no_grad():
         if isinstance(sentence, str):
@@ -161,8 +113,7 @@ def custom_translate_torch(sentence, model, de_nlp, en_vocab, de_vocab, sos_toke
         tokens = en_vocab.lookup_tokens(inputs)
     return tokens
 
-def custom_translate_onnx(sentence, encoder_sess, decoder_sess, de_nlp, en_vocab, de_vocab, sos_token, eos_token):
-    """Custom implementation of translate_onnx to avoid architecture module dependency"""
+def translate_onnx(sentence, encoder_sess, decoder_sess, de_nlp, en_vocab, de_vocab, sos_token, eos_token):
     tokens = [sos_token] + [tok.text.lower() for tok in de_nlp.tokenizer(sentence)] + [eos_token]
     input_ids = de_vocab.lookup_indices(tokens)
     src_tensor = np.array(input_ids, dtype=np.int64).reshape(-1, 1) 
@@ -195,8 +146,7 @@ def custom_translate_onnx(sentence, encoder_sess, decoder_sess, de_nlp, en_vocab
 
     return translated_tokens
 
-def custom_batch_translate_torch(sentences, model, de_nlp, en_vocab, de_vocab, sos_token, eos_token):
-    """Batch inference implementation for PyTorch model"""
+def batch_translate_torch(sentences, model, de_nlp, en_vocab, de_vocab, sos_token, eos_token):
     model.eval()
     translated_results = []
     
@@ -225,8 +175,7 @@ def custom_batch_translate_torch(sentences, model, de_nlp, en_vocab, de_vocab, s
     
     return translated_results
 
-def custom_batch_translate_onnx(sentences, encoder_sess, decoder_sess, de_nlp, en_vocab, de_vocab, sos_token, eos_token):
-    """Batch inference implementation for ONNX model"""
+def batch_translate_onnx(sentences, encoder_sess, decoder_sess, de_nlp, en_vocab, de_vocab, sos_token, eos_token):
     translated_results = []
     
     for sentence in sentences:
@@ -264,8 +213,7 @@ def custom_batch_translate_onnx(sentences, encoder_sess, decoder_sess, de_nlp, e
     
     return translated_results
 
-def benchmark_torch_model(model, test_sentences, en_vocab, de_vocab, en_nlp, de_nlp, name):
-    """Benchmark PyTorch model for single inference"""
+def benchmark_torch_model(model, test_sentences, en_vocab, de_vocab, de_nlp, name):
     print(f"Benchmarking {name} - Single Inference...")
     
     SOS_TOKEN = '<sos>'
@@ -274,7 +222,7 @@ def benchmark_torch_model(model, test_sentences, en_vocab, de_vocab, en_nlp, de_
     latencies = []
     
     for _ in range(WARMUP_RUNS):
-        custom_translate_torch(test_sentences[0], model, de_nlp, en_vocab, de_vocab, SOS_TOKEN, EOS_TOKEN)
+        translate_torch(test_sentences[0], model, de_nlp, en_vocab, de_vocab, SOS_TOKEN, EOS_TOKEN)
     
     gc.collect()
     
@@ -284,7 +232,7 @@ def benchmark_torch_model(model, test_sentences, en_vocab, de_vocab, en_nlp, de_
         activities=profiler_activities, record_shapes=True, profile_memory=True, with_stack=True) as prof:
         for sentence in test_sentences:
             start_time = time.time()
-            custom_translate_torch(sentence, model, de_nlp, en_vocab, de_vocab, SOS_TOKEN, EOS_TOKEN)
+            translate_torch(sentence, model, de_nlp, en_vocab, de_vocab, SOS_TOKEN, EOS_TOKEN)
             end_time = time.time()
             
             latencies.append((end_time - start_time) * 1000) 
@@ -298,8 +246,7 @@ def benchmark_torch_model(model, test_sentences, en_vocab, de_vocab, en_nlp, de_
         "prof_stats": prof_stats
     }
 
-def benchmark_batch_torch_model(model, test_sentences, en_vocab, de_vocab, en_nlp, de_nlp, name):
-    """Benchmark PyTorch model for batch inference"""
+def benchmark_batch_torch_model(model, test_sentences, en_vocab, de_vocab, de_nlp, name):
     print(f"Benchmarking {name} - Batch Inference (batch size={BATCH_SIZE})...")
     
     SOS_TOKEN = '<sos>'
@@ -318,13 +265,13 @@ def benchmark_batch_torch_model(model, test_sentences, en_vocab, de_vocab, en_nl
         batches.append(batches[0])
     
     for _ in range(WARMUP_RUNS):
-        custom_batch_translate_torch(batches[0], model, de_nlp, en_vocab, de_vocab, SOS_TOKEN, EOS_TOKEN)
+        batch_translate_torch(batches[0], model, de_nlp, en_vocab, de_vocab, SOS_TOKEN, EOS_TOKEN)
     
     gc.collect()
 
     for batch in batches[:NUM_RUNS]:
         start_time = time.time()
-        custom_batch_translate_torch(batch, model, de_nlp, en_vocab, de_vocab, SOS_TOKEN, EOS_TOKEN)
+        batch_translate_torch(batch, model, de_nlp, en_vocab, de_vocab, SOS_TOKEN, EOS_TOKEN)
         end_time = time.time()
         
         latencies.append((end_time - start_time) * 1000) 
@@ -335,8 +282,7 @@ def benchmark_batch_torch_model(model, test_sentences, en_vocab, de_vocab, en_nl
         "latency_std": np.std(latencies)
     }
 
-def benchmark_onnx_model(encoder_sess, decoder_sess, test_sentences, en_vocab, de_vocab, en_nlp, de_nlp, name):
-    """Benchmark ONNX model for single inference"""
+def benchmark_onnx_model(encoder_sess, decoder_sess, test_sentences, en_vocab, de_vocab, de_nlp, name):
     print(f"Benchmarking {name} - Single Inference...")
     
     SOS_TOKEN = '<sos>'
@@ -345,7 +291,7 @@ def benchmark_onnx_model(encoder_sess, decoder_sess, test_sentences, en_vocab, d
     latencies = []
     
     for _ in range(WARMUP_RUNS):
-        custom_translate_onnx(test_sentences[0], encoder_sess, decoder_sess, de_nlp, en_vocab, de_vocab, SOS_TOKEN, EOS_TOKEN)
+        translate_onnx(test_sentences[0], encoder_sess, decoder_sess, de_nlp, en_vocab, de_vocab, SOS_TOKEN, EOS_TOKEN)
     
     gc.collect()
     
@@ -355,7 +301,7 @@ def benchmark_onnx_model(encoder_sess, decoder_sess, test_sentences, en_vocab, d
         activities=profiler_activities, record_shapes=True, profile_memory=True, with_stack=True) as prof:
         for sentence in test_sentences:
             start_time = time.time()
-            custom_translate_onnx(sentence, encoder_sess, decoder_sess, de_nlp, en_vocab, de_vocab, SOS_TOKEN, EOS_TOKEN)
+            translate_onnx(sentence, encoder_sess, decoder_sess, de_nlp, en_vocab, de_vocab, SOS_TOKEN, EOS_TOKEN)
             end_time = time.time()
             
             latencies.append((end_time - start_time) * 1000) 
@@ -369,8 +315,7 @@ def benchmark_onnx_model(encoder_sess, decoder_sess, test_sentences, en_vocab, d
         "prof_stats": prof_stats
     }
 
-def benchmark_batch_onnx_model(encoder_sess, decoder_sess, test_sentences, en_vocab, de_vocab, en_nlp, de_nlp, name):
-    """Benchmark ONNX model for batch inference"""
+def benchmark_batch_onnx_model(encoder_sess, decoder_sess, test_sentences, en_vocab, de_vocab, de_nlp, name):
     print(f"Benchmarking {name} - Batch Inference (batch size={BATCH_SIZE})...")
     
     SOS_TOKEN = '<sos>'
@@ -389,13 +334,13 @@ def benchmark_batch_onnx_model(encoder_sess, decoder_sess, test_sentences, en_vo
         batches.append(batches[0])
     
     for _ in range(WARMUP_RUNS):
-        custom_batch_translate_onnx(batches[0], encoder_sess, decoder_sess, de_nlp, en_vocab, de_vocab, SOS_TOKEN, EOS_TOKEN)
+        batch_translate_onnx(batches[0], encoder_sess, decoder_sess, de_nlp, en_vocab, de_vocab, SOS_TOKEN, EOS_TOKEN)
     
     gc.collect()
     
     for batch in batches[:NUM_RUNS]:  
         start_time = time.time()
-        custom_batch_translate_onnx(batch, encoder_sess, decoder_sess, de_nlp, en_vocab, de_vocab, SOS_TOKEN, EOS_TOKEN)
+        batch_translate_onnx(batch, encoder_sess, decoder_sess, de_nlp, en_vocab, de_vocab, SOS_TOKEN, EOS_TOKEN)
         end_time = time.time()
         
         latencies.append((end_time - start_time) * 1000)  
@@ -407,8 +352,6 @@ def benchmark_batch_onnx_model(encoder_sess, decoder_sess, test_sentences, en_vo
     }
 
 def plot_results(results):
-    """Generate bar charts for visualization"""
-
     single_results = [result for result in results if "(Single)" in result["name"]]
     batch_results = [result for result in results if "(Batch)" in result["name"]]
     
@@ -451,7 +394,6 @@ def plot_results(results):
     plt.show()
 
 def main():
-    """Main benchmark function"""
     test_sentences = [
         "Hello, how are you?",
         "I would like to learn German.",
@@ -465,8 +407,8 @@ def main():
         "Please translate this sentence from English to German."
     ]
     
-    en_vocab_adapter, de_vocab_adapter, en_vocab_proper, de_vocab_proper = load_vocab()
-    en_nlp, de_nlp = load_tokenizers()
+    en_vocab_adapter, de_vocab_adapter = load_vocab()
+    de_nlp = spacy.load('de_core_news_sm')
     
     input_dim = len(de_vocab_adapter)
     output_dim = len(en_vocab_adapter)
@@ -485,20 +427,17 @@ def main():
     try:
         # Test PyTorch model - single inference
         torch_model = load_torch_model(pt_model_path, input_dim, output_dim)
-        torch_results = benchmark_torch_model(torch_model, test_sentences, en_vocab_adapter, de_vocab_adapter, en_nlp, de_nlp, "PyTorch")
+        torch_results = benchmark_torch_model(torch_model, test_sentences, en_vocab_adapter, de_vocab_adapter, de_nlp, "PyTorch")
         results.append(torch_results)
         
         # Test PyTorch model - batch inference
-        torch_batch_results = benchmark_batch_torch_model(torch_model, test_sentences, en_vocab_adapter, de_vocab_adapter, en_nlp, de_nlp, "PyTorch")
+        torch_batch_results = benchmark_batch_torch_model(torch_model, test_sentences, en_vocab_adapter, de_vocab_adapter, de_nlp, "PyTorch")
         results.append(torch_batch_results)
         
         del torch_model
         gc.collect()
-        torch.cuda.empty_cache() if torch.cuda.is_available() else None
     except Exception as e:
         print(f"Error benchmarking PyTorch model: {e}")
-        import traceback
-        traceback.print_exc()
     
     try:
         if hasattr(torch.backends, 'quantized') and hasattr(torch.backends.quantized, 'supported_engines'):
@@ -507,79 +446,47 @@ def main():
                 torch.backends.quantized.engine = engines[0]
         # Test Quantized PyTorch model - single inference
         quant_torch_model = load_torch_model(quant_pt_model_path, input_dim, output_dim)
-        quant_torch_results = benchmark_torch_model(quant_torch_model, test_sentences, en_vocab_adapter, de_vocab_adapter, en_nlp, de_nlp, "Quantized PyTorch")
+        quant_torch_results = benchmark_torch_model(quant_torch_model, test_sentences, en_vocab_adapter, de_vocab_adapter, de_nlp, "Quantized PyTorch")
         results.append(quant_torch_results)
         # Test Quantized PyTorch model - batch inference
-        quant_torch_batch_results = benchmark_batch_torch_model(quant_torch_model, test_sentences, en_vocab_adapter, de_vocab_adapter, en_nlp, de_nlp, "Quantized PyTorch")
+        quant_torch_batch_results = benchmark_batch_torch_model(quant_torch_model, test_sentences, en_vocab_adapter, de_vocab_adapter, de_nlp, "Quantized PyTorch")
         results.append(quant_torch_batch_results)
         
         del quant_torch_model
         gc.collect()
-        torch.cuda.empty_cache() if torch.cuda.is_available() else None
     except Exception as e:
         print(f"Error benchmarking Quantized PyTorch model: {e}")
         print("Creating freshly quantized model for benchmark...")
-        
-        try:
-            torch_model = load_torch_model(pt_model_path, input_dim, output_dim)
-            print("Regular model loaded, quantizing it...")
-            
-            quant_torch_model = torch.quantization.quantize_dynamic(
-                torch_model,
-                {nn.LSTM, nn.Linear},
-                dtype=torch.qint8
-            )
-            
-            quant_torch_results = benchmark_torch_model(quant_torch_model, test_sentences, en_vocab_adapter, de_vocab_adapter, en_nlp, de_nlp, "Quantized PyTorch (Fresh)")
-            results.append(quant_torch_results)
-            
-            quant_torch_batch_results = benchmark_batch_torch_model(quant_torch_model, test_sentences, en_vocab_adapter, de_vocab_adapter, en_nlp, de_nlp, "Quantized PyTorch (Fresh)")
-            results.append(quant_torch_batch_results)
-            
-            del torch_model, quant_torch_model
-            gc.collect()
-            torch.cuda.empty_cache() if torch.cuda.is_available() else None
-            
-        except Exception as e2:
-            print(f"Error creating fresh quantized model: {e2}")
-            import traceback
-            traceback.print_exc()
     
     try:
         # Test ONNX model - single inference
         encoder_sess, decoder_sess = load_onnx_sessions(onnx_encoder_path, onnx_decoder_path)
-        onnx_results = benchmark_onnx_model(encoder_sess, decoder_sess, test_sentences, en_vocab_adapter, de_vocab_adapter, en_nlp, de_nlp, "ONNX")
+        onnx_results = benchmark_onnx_model(encoder_sess, decoder_sess, test_sentences, en_vocab_adapter, de_vocab_adapter, de_nlp, "ONNX")
         results.append(onnx_results)
         
         # Test ONNX model - batch inference
-        onnx_batch_results = benchmark_batch_onnx_model(encoder_sess, decoder_sess, test_sentences, en_vocab_adapter, de_vocab_adapter, en_nlp, de_nlp, "ONNX")
+        onnx_batch_results = benchmark_batch_onnx_model(encoder_sess, decoder_sess, test_sentences, en_vocab_adapter, de_vocab_adapter, de_nlp, "ONNX")
         results.append(onnx_batch_results)
         
         del encoder_sess, decoder_sess
         gc.collect()
-        torch.cuda.empty_cache() if torch.cuda.is_available() else None
     except Exception as e:
         print(f"Error benchmarking ONNX model: {e}")
-        import traceback
-        traceback.print_exc()
     
     try:
         # Test Quantized ONNX model - single inference
         quant_encoder_sess, quant_decoder_sess = load_onnx_sessions(quant_onnx_encoder_path, quant_onnx_decoder_path)
-        quant_onnx_results = benchmark_onnx_model(quant_encoder_sess, quant_decoder_sess, test_sentences, en_vocab_adapter, de_vocab_adapter, en_nlp, de_nlp, "Quantized ONNX")
+        quant_onnx_results = benchmark_onnx_model(quant_encoder_sess, quant_decoder_sess, test_sentences, en_vocab_adapter, de_vocab_adapter, de_nlp, "Quantized ONNX")
         results.append(quant_onnx_results)
         
         # Test Quantized ONNX model - batch inference
-        quant_onnx_batch_results = benchmark_batch_onnx_model(quant_encoder_sess, quant_decoder_sess, test_sentences, en_vocab_adapter, de_vocab_adapter, en_nlp, de_nlp, "Quantized ONNX")
+        quant_onnx_batch_results = benchmark_batch_onnx_model(quant_encoder_sess, quant_decoder_sess, test_sentences, en_vocab_adapter, de_vocab_adapter, de_nlp, "Quantized ONNX")
         results.append(quant_onnx_batch_results)
         
         del quant_encoder_sess, quant_decoder_sess
         gc.collect()
-        torch.cuda.empty_cache() if torch.cuda.is_available() else None
     except Exception as e:
         print(f"Error benchmarking Quantized ONNX model: {e}")
-        import traceback
-        traceback.print_exc()
     
     if not results:
         print("No benchmarks completed successfully. Check the errors above.")
