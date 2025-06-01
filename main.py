@@ -3,7 +3,6 @@ from pydantic import BaseModel
 import spacy
 import uvicorn
 import os
-import datasets
 import json
 import onnxruntime as ort
 from contextlib import asynccontextmanager

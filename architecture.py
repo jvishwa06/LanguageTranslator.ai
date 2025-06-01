@@ -23,7 +23,7 @@ class Decoder(nn.Module):
         self.num_layers = num_layers
         self.dropout = nn.Dropout(dropout)
         self.embedding = nn.Embedding(output_dim,embedding_dim)
-        self.lstm = nn.LSTM(embedding_dim,hidden_size,num_layers=num_layers,bidirectional=True,dropout=dropout)
+        self.lstm = nn.LSTM(embedding_dim,hidden_size,num_layers=num_layers,dropout=dropout)
         self.fc = nn.Linear(hidden_size*2,output_dim)
     def forward(self,input_token,hidden,cell):
         input_token = input_token.unsqueeze(0)

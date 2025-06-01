@@ -3,7 +3,6 @@ import time
 import json
 import torch
 import torch.profiler
-import torch.nn as nn
 import numpy as np
 import onnxruntime as ort
 import matplotlib.pyplot as plt
